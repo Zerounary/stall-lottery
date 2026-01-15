@@ -11,6 +11,8 @@ const el = {
   statusSummary: document.getElementById('statusSummary'),
   stallGrid: document.getElementById('stallGrid'),
   qtyFilterGroup: document.getElementById('qtyFilterGroup'),
+  btnRefreshStallClass: document.getElementById('btnRefreshStallClass'),
+  stallClassList: document.getElementById('stallClassList'),
 };
 
 let isRunning = false;
@@ -162,6 +164,109 @@ async function applyDefaultRangeForType(stallType) {
   el.stallNumbers.value = res.defaultRange;
 }
 
+function toInt(v, fallback = 0) {
+  const n = Number(String(v || '').trim());
+  if (!Number.isFinite(n)) return fallback;
+  return Math.trunc(n);
+}
+
+function renderStallClassList(list) {
+  if (!el.stallClassList) return;
+  el.stallClassList.innerHTML = '';
+
+  if (!Array.isArray(list) || list.length === 0) {
+    el.stallClassList.innerHTML = '<div class="muted">暂无数据</div>';
+    return;
+  }
+
+  for (const row of list) {
+    const wrap = document.createElement('div');
+    wrap.className = 'stall-class-row';
+
+    const meta = document.createElement('div');
+    meta.className = 'stall-class-meta';
+    const safeType = row && row.stall_type != null ? String(row.stall_type) : '';
+    const safeClass = row && row.sell_class != null ? String(row.sell_class) : '';
+    const safePersonCount = row && row.person_count != null ? String(row.person_count) : '0';
+    meta.innerHTML = `
+      <div><span class="muted">类型：</span><span>${safeType}</span></div>
+      <div><span class="muted">分类：</span><span>${safeClass}</span></div>
+      <div><span class="muted">人数：</span><span>${safePersonCount}</span></div>
+    `;
+
+    const edit = document.createElement('div');
+    edit.className = 'stall-class-edit';
+
+    const inputStallCount = document.createElement('input');
+    inputStallCount.className = 'input stall-class-input';
+    inputStallCount.type = 'number';
+    inputStallCount.value = row && row.stall_count != null ? String(row.stall_count) : '0';
+    inputStallCount.min = '0';
+
+    const inputOrderNo = document.createElement('input');
+    inputOrderNo.className = 'input stall-class-input';
+    inputOrderNo.type = 'number';
+    inputOrderNo.value = row && row.order_no != null ? String(row.order_no) : '0';
+    inputOrderNo.min = '0';
+
+    const btnSave = document.createElement('button');
+    btnSave.className = 'btn btn-primary stall-class-save';
+    btnSave.type = 'button';
+    btnSave.textContent = '保存';
+
+    btnSave.addEventListener('click', async () => {
+      const id = row && row.id != null ? Number(row.id) : 0;
+      const stallCount = toInt(inputStallCount.value, 0);
+      const orderNo = toInt(inputOrderNo.value, 0);
+      btnSave.disabled = true;
+      try {
+        const res = await socket.emitWithAck('bigscreen:updateStallClass', {
+          id,
+          stallType: safeType,
+          sellClass: safeClass,
+          stallCount,
+          orderNo,
+        });
+        if (!res || !res.ok) {
+          el.hint.textContent = (res && res.message) || '保存失败';
+          return;
+        }
+        el.hint.textContent = '已保存';
+        renderStallClassList(res.list);
+      } finally {
+        btnSave.disabled = false;
+      }
+    });
+
+    const labelStallCount = document.createElement('div');
+    labelStallCount.className = 'stall-class-edit-label';
+    labelStallCount.textContent = '摊位数';
+    edit.appendChild(labelStallCount);
+    edit.appendChild(inputStallCount);
+
+    const labelOrderNo = document.createElement('div');
+    labelOrderNo.className = 'stall-class-edit-label';
+    labelOrderNo.textContent = '顺序';
+    edit.appendChild(labelOrderNo);
+    edit.appendChild(inputOrderNo);
+    edit.appendChild(btnSave);
+
+    wrap.appendChild(meta);
+    wrap.appendChild(edit);
+    el.stallClassList.appendChild(wrap);
+  }
+}
+
+async function refreshStallClassList() {
+  if (!el.stallClassList) return;
+  const res = await socket.emitWithAck('bigscreen:getStallClasses', {});
+  if (!res || !res.ok) {
+    el.stallClassList.innerHTML = '<div class="muted">加载失败</div>';
+    return;
+  }
+  renderStallClassList(res.list);
+}
+
 socket.on('connect', () => setSocketStatus(true));
 socket.on('disconnect', () => setSocketStatus(false));
 
@@ -183,6 +288,8 @@ socket.on('connect', async () => {
       const stallType = String(el.stallType.value || '').trim();
       if (stallType) await applyDefaultRangeForType(stallType);
     }
+
+    await refreshStallClassList();
 
     await refreshStatus();
   } catch {
@@ -239,6 +346,12 @@ el.mode.addEventListener('change', async () => {
 if (el.qtyFilterGroup) {
   el.qtyFilterGroup.addEventListener('change', async () => {
     await refreshStatus();
+  });
+}
+
+if (el.btnRefreshStallClass) {
+  el.btnRefreshStallClass.addEventListener('click', async () => {
+    await refreshStallClassList();
   });
 }
 

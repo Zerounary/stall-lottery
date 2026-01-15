@@ -388,6 +388,48 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('bigscreen:getStallClasses', async (payload = {}, ack) => {
+    try {
+      const list = await db.getStallClasses();
+      if (typeof ack === 'function') ack({ ok: true, list });
+    } catch (e) {
+      console.error(e);
+      if (typeof ack === 'function') ack({ ok: false, message: '服务异常' });
+    }
+  });
+
+  socket.on('bigscreen:updateStallClass', async (payload = {}, ack) => {
+    try {
+      const id = Number(payload.id);
+      if (!Number.isFinite(id) || id <= 0) {
+        if (typeof ack === 'function') ack({ ok: false, message: '参数错误' });
+        return;
+      }
+
+      const stallType = String(payload.stallType || '').trim();
+      const sellClass = String(payload.sellClass || '').trim();
+      const stallCount = Number(payload.stallCount || 0);
+      const orderNo = Number(payload.orderNo || 0);
+      if (!stallType || !sellClass || !Number.isFinite(stallCount) || !Number.isFinite(orderNo)) {
+        if (typeof ack === 'function') ack({ ok: false, message: '参数错误' });
+        return;
+      }
+
+      await db.updateStallClass({
+        id,
+        stallType,
+        sellClass,
+        stallCount,
+        orderNo,
+      });
+      const list = await db.getStallClasses();
+      if (typeof ack === 'function') ack({ ok: true, list });
+    } catch (e) {
+      console.error(e);
+      if (typeof ack === 'function') ack({ ok: false, message: '更新失败' });
+    }
+  });
+
   socket.on('bigscreen:stallClass:list', async (payload = {}, ack) => {
     try {
       const list = await db.getStallClasses();

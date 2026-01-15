@@ -362,7 +362,7 @@ async function insertOwnersBulk(owners) {
 }
 
 async function getStallClasses() {
-  return all('SELECT * FROM stall_class ORDER BY order_no ASC, id ASC');
+  return all('SELECT * FROM stall_class ORDER BY order_no ASC, stall_type ASC, sell_class ASC, id ASC');
 }
 
 async function addStallClass({ stallType, sellClass, stallCount, orderNo }) {
