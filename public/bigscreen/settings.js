@@ -21,11 +21,50 @@ const el = {
 let isRunning = false;
 let serverMode = 'idle';
 let stallClassData = [];
+let desiredStallType = '';
 
 function setSocketStatus(connected) {
   el.socketStatus.textContent = connected ? '已连接' : '未连接';
   el.socketStatus.classList.toggle('pill-ok', connected);
   el.socketStatus.classList.toggle('pill-warn', !connected);
+}
+
+function setStallTypeValue(value) {
+  desiredStallType = String(value || '').trim();
+  applyStallTypeValue();
+}
+
+function applyStallTypeValue() {
+  if (!el.stallType) return;
+  el.stallType.value = desiredStallType;
+}
+
+async function loadStallTypes() {
+  if (!el.stallType) return;
+  try {
+    const res = await fetch('/api/stall-types');
+    if (!res.ok) throw new Error('failed');
+    const data = await res.json();
+    const list = Array.isArray(data.list) ? data.list : [];
+    el.stallType.innerHTML = '';
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = list.length === 0 ? '暂无摊位类型' : '请选择';
+    el.stallType.appendChild(defaultOption);
+    list.forEach((type) => {
+      const opt = document.createElement('option');
+      opt.value = type;
+      opt.textContent = type;
+      el.stallType.appendChild(opt);
+    });
+    el.stallType.disabled = list.length === 0;
+    applyStallTypeValue();
+  } catch (err) {
+    console.error(err);
+    el.stallType.innerHTML = '<option value=\"\">加载失败</option>';
+    el.stallType.disabled = true;
+    if (el.hint) el.hint.textContent = '加载摊位类型失败，请刷新页面';
+  }
 }
 
 function getModeText(mode) {
@@ -345,13 +384,14 @@ socket.on('connect', async () => {
     const cfg = await socket.emitWithAck('bigscreen:getConfig', {});
     if (!cfg || !cfg.ok) return;
 
-    if (cfg.stallType) el.stallType.value = String(cfg.stallType);
+    if (cfg.stallType) setStallTypeValue(cfg.stallType);
     if (cfg.mode === 'queue' || cfg.mode === 'draw') el.mode.value = String(cfg.mode);
     if (cfg.qtyFilter) setQtyFilterValue(cfg.qtyFilter);
 
     serverMode = cfg.mode === 'queue' || cfg.mode === 'draw' ? cfg.mode : 'idle';
     isRunning = serverMode === 'queue' || serverMode === 'draw';
     updateUi();
+loadStallTypes();
 
     await refreshStallClassList();
 
@@ -393,6 +433,7 @@ socket.on('server:drawResultBroadcast', async () => {
 
 el.stallType.addEventListener('change', async () => {
   const stallType = String(el.stallType.value || '').trim();
+  setStallTypeValue(stallType);
   if (!stallType) return;
   if (String(el.mode.value || 'queue') === 'draw') {
     el.hint.textContent = '抽签模式摊位号范围由“摊位分类”配置自动生成';

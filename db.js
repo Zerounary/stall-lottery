@@ -424,6 +424,20 @@ async function syncStallClassStats() {
   }
 }
 
+async function getAllStallTypes() {
+  const rows = await all(
+    `SELECT DISTINCT stall_type AS stallType
+     FROM (
+       SELECT stall_type FROM stall_owner
+       UNION ALL
+       SELECT stall_type FROM stall_class
+     )
+     WHERE stall_type IS NOT NULL AND TRIM(stall_type) != ''
+     ORDER BY TRIM(stall_type) COLLATE NOCASE ASC`
+  );
+  return rows.map((r) => r.stallType).filter((v) => typeof v === 'string' && v.trim() !== '');
+}
+
 module.exports = {
   init,
   setAppConfig,
@@ -453,4 +467,5 @@ module.exports = {
   updateStallClass,
   deleteStallClass,
   syncStallClassStats,
+  getAllStallTypes,
 };

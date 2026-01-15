@@ -140,6 +140,16 @@ app.get('/api/export/stall-class.xlsx', async (req, res) => {
   }
 });
 
+app.get('/api/stall-types', async (req, res) => {
+  try {
+    const list = await db.getAllStallTypes();
+    res.json({ ok: true, list });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, message: 'failed' });
+  }
+});
+
 let currentStallType = '';
 let currentMode = 'idle';
 let currentQtyFilter = 'multi';
