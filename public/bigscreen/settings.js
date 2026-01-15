@@ -172,6 +172,36 @@ function toInt(v, fallback = 0) {
   return Math.trunc(n);
 }
 
+function computeRangesForAllTypes(list) {
+  const rows = Array.isArray(list) ? list.slice() : [];
+  const grouped = new Map();
+  for (const r of rows) {
+    const type = String((r && r.stall_type) || '').trim();
+    if (!grouped.has(type)) grouped.set(type, []);
+    grouped.get(type).push(r);
+  }
+
+  const ranges = new Map();
+  for (const [type, group] of grouped.entries()) {
+    const sorted = group.slice().sort((a, b) => {
+      const ao = Number((a && a.order_no) || 0);
+      const bo = Number((b && b.order_no) || 0);
+      if (ao !== bo) return ao - bo;
+      return Number((a && a.id) || 0) - Number((b && b.id) || 0);
+    });
+
+    let cursor = 1;
+    for (const r of sorted) {
+      const stallCount = Math.max(0, Number((r && r.stall_count) || 0));
+      const start = cursor;
+      const end = cursor + stallCount - 1;
+      cursor = end + 1;
+      ranges.set(Number((r && r.id) || 0), { start, end, count: stallCount, stallType: type });
+    }
+  }
+  return ranges;
+}
+
 function updateStallClassRowIndicator(rowEl) {
   if (!rowEl) return;
   const index = Number(rowEl.dataset.index);
@@ -186,6 +216,8 @@ function renderStallClassList(list) {
   el.stallClassList.innerHTML = '';
 
   stallClassData = Array.isArray(list) ? list.slice() : [];
+
+  const rangeMap = computeRangesForAllTypes(stallClassData);
 
   if (!Array.isArray(list) || list.length === 0) {
     el.stallClassList.innerHTML = '<div class="muted">暂无数据</div>';
@@ -202,10 +234,13 @@ function renderStallClassList(list) {
     const safeType = row && row.stall_type != null ? String(row.stall_type) : '';
     const safeClass = row && row.sell_class != null ? String(row.sell_class) : '';
     const safePersonCount = row && row.person_count != null ? String(row.person_count) : '0';
+    const range = rangeMap.get(Number(row && row.id) || 0);
+    const rangeText = range && range.count > 0 ? `${range.start}-${range.end}` : '-';
     meta.innerHTML = `
       <div><span class="muted">类型：</span><span>${safeType}</span></div>
       <div><span class="muted">分类：</span><span>${safeClass}</span></div>
       <div><span class="muted">需求数：</span><span>${safePersonCount}</span></div>
+      <div><span class="muted">号段：</span><span>${rangeText}</span></div>
     `;
 
     const edit = document.createElement('div');
