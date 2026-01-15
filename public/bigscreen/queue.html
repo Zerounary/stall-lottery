@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>摊位抽签 - 排号大屏</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <header class="header queue-header">
+        <div class="title" id="pageTitle">等待开始 - 排号</div>
+        <span id="socketStatus" class="pill pill-warn">未连接</span>
+      </header>
+
+      <main class="grid queue-layout">
+        <section class="card card-queued flip-card" id="queueFlipCard">
+          <div class="flip-inner" id="queueFlipInner">
+            <div class="flip-face flip-front">
+              <div class="section-head">
+                <div>
+                  <h2>
+                    排号名单
+                    <span class="tag" id="unqueuedTag">未排号 <span class="badge-count" id="unqueuedBadge">0</span></span>
+                  </h2>
+                  <div id="statusMessage" class="muted"></div>
+                </div>
+                <div class="row">
+                  <div class="pill" id="currentMode">未开始</div>
+                  <button class="btn btn-secondary" id="btnFlipToUnqueued">查看未排号</button>
+                </div>
+              </div>
+              <div id="queuedList" class="list tall"></div>
+              <div id="allDone" class="success-msg"></div>
+            </div>
+
+            <div class="flip-face flip-back">
+              <div class="section-head">
+                <h2>未排号 <span class="badge-count" id="unqueuedBadgeBack">0</span></h2>
+                <button class="btn btn-secondary" id="btnFlipToQueued">返回</button>
+              </div>
+              <div id="unqueuedList" class="list tall muted-list"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card card-qr">
+          <div class="section-head">
+            <h2>扫码登录排号</h2>
+          </div>
+          <div class="qr-panel">
+            <img id="qrImg" class="qr-img" alt="扫码登录" />
+            <div class="muted qr-url" id="mobileUrl"></div>
+            <div class="muted">扫码后填写身份证号和姓名登录</div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="./queue.js"></script>
+  </body>
+</html>

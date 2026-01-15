@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>摊位抽签 - 手机端</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <div class="card" id="loginCard">
+        <h1>摊位抽签（手机端）</h1>
+        <div class="field">
+          <label>身份证号</label>
+          <input id="idCard" class="input" placeholder="请输入身份证号" />
+        </div>
+        <div class="field">
+          <label>姓名</label>
+          <input id="name" class="input" placeholder="请输入姓名" />
+        </div>
+        <button id="btnLogin" class="btn btn-primary">登录</button>
+        <div id="loginMsg" class="msg"></div>
+      </div>
+
+      <div class="card hidden" id="mainCard">
+        <div class="topbar">
+          <div class="topline">
+            <span class="muted">姓名：</span><span id="infoName"></span>
+          </div>
+          <div class="topline">
+            <span class="muted">身份证：</span><span id="infoIdCard"></span>
+          </div>
+          <div class="topline">
+            <span class="muted">大屏当前类型：</span><span id="currentTypeMobile">未开始</span>
+            <span class="muted">剩余：</span><span id="currentRemainingMobile">-</span>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <button id="btnLogout" class="btn btn-logout" type="button">退出登录</button>
+        </div>
+
+        <h2 class="section-title">我的摊位类型</h2>
+        <div id="typeCards" class="cards"></div>
+
+        <div class="card inner" id="detailCard">
+          <h2 class="section-title">详情</h2>
+          <div class="info">
+            <div><span class="muted">类型：</span><span id="detailType">-</span></div>
+            <div><span class="muted">状态：</span><span id="detailStatus">-</span></div>
+            <div><span class="muted">认购数量：</span><span id="infoQty">-</span></div>
+            <div><span class="muted">排号：</span><span id="infoQueueNo">-</span></div>
+          </div>
+
+          <div class="actions">
+            <button id="btnQueue" class="btn">排号</button>
+          </div>
+
+          <div id="result" class="result">请选择一个类型</div>
+        </div>
+      </div>
+
+      <div class="footer" id="socketStatus">未连接</div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="./main.js"></script>
+  </body>
+</html>

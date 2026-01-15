@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>摊位抽签 - 大屏设置</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+
+<body>
+  <div class="layout">
+    <header class="header">
+      <div class="title">摊位抽签（大屏端）- 设置</div>
+      <div class="status">
+        <span id="socketStatus" class="pill pill-warn">未连接</span>
+      </div>
+    </header>
+
+    <main class="grid single">
+      <section class="card">
+        <h2>配置</h2>
+
+        <div class="field">
+          <label>摊位类型</label>
+          <select id="stallType" class="input">
+            <option value="">请选择</option>
+            <option value="蔬菜摊">蔬菜摊</option>
+            <option value="肉摊">肉摊</option>
+            <option value="花车">花车</option>
+            <option value="车载摊位">车载摊位</option>
+            <option value="展销摊位">展销摊位</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>模式</label>
+          <select id="mode" class="input">
+            <option value="queue">排号</option>
+            <option value="draw">抽签</option>
+          </select>
+        </div>
+
+        <div class="field" id="stallNumbersField">
+          <label>摊位号列表（抽签模式时使用，支持“1,2,3” 或 “1-30”）</label>
+          <input id="stallNumbers" class="input" placeholder="例如：1-30" />
+        </div>
+
+        <div class="field">
+          <label>摊位数量过滤</label>
+          <div class="radio-group" id="qtyFilterGroup">
+            <label class="radio">
+              <input type="radio" name="qtyFilter" value="multi" />
+              <span>多摊位（仅限认购数量 &gt; 1）</span>
+            </label>
+            <label class="radio">
+              <input type="radio" name="qtyFilter" value="single" checked />
+              <span>单摊位（仅限认购数量 = 1）</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="row">
+          <button id="btnStartStop" class="btn btn-primary">开始排号</button>
+          <div id="hint" class="muted"></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>当前状态</h2>
+        <div id="statusSummary" class="info"></div>
+        <div id="stallGrid" class="stall-grid"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="./settings.js"></script>
+</body>
+
+</html>

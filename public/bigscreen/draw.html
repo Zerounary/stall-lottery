@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>摊位抽签 - 抽签大屏</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <header class="header queue-header">
+        <div class="title" id="pageTitle">等待开始 · 抽签</div>
+        <span id="socketStatus" class="pill pill-warn">未连接</span>
+      </header>
+
+      <main class="grid single draw-layout">
+        <section class="card">
+          <div class="section-head">
+            <div>
+              <h2>当前待抽签人员</h2>
+              <div class="pill pill-ghost" id="currentFilter">单摊位</div>
+            </div>
+            <div class="draw-meta">
+              <div class="draw-meta-pills">
+                <span id="currentType" class="pill">未选择</span>
+                <span id="currentMode" class="pill">-</span>
+                <span id="remaining" class="pill">剩余:-</span>
+              </div>
+              <div class="draw-meta-actions">
+                <button id="btnNext" class="btn btn-secondary btn-next-inline">下一位</button>
+                <button id="btnDraw" class="btn btn-danger btn-draw-primary">立即抽签</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="draw-current draw-current-large" id="currentPerson">暂无</div>
+
+          <div id="hint" class="muted"></div>
+        </section>
+
+        <section class="card card-result">
+          <h2>抽签结果</h2>
+          <div id="resultDisplay" class="result">等待抽签...</div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="./draw.js"></script>
+  </body>
+</html>

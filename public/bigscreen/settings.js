@@ -1,0 +1,303 @@
+const socket = io();
+
+const el = {
+  socketStatus: document.getElementById('socketStatus'),
+  stallType: document.getElementById('stallType'),
+  mode: document.getElementById('mode'),
+  stallNumbersField: document.getElementById('stallNumbersField'),
+  stallNumbers: document.getElementById('stallNumbers'),
+  btnStartStop: document.getElementById('btnStartStop'),
+  hint: document.getElementById('hint'),
+  statusSummary: document.getElementById('statusSummary'),
+  stallGrid: document.getElementById('stallGrid'),
+  qtyFilterGroup: document.getElementById('qtyFilterGroup'),
+};
+
+let isRunning = false;
+let serverMode = 'idle';
+
+function setSocketStatus(connected) {
+  el.socketStatus.textContent = connected ? '已连接' : '未连接';
+  el.socketStatus.classList.toggle('pill-ok', connected);
+  el.socketStatus.classList.toggle('pill-warn', !connected);
+}
+
+function getModeText(mode) {
+  if (mode === 'queue') return '排号';
+  if (mode === 'draw') return '抽签';
+  return '未开始';
+}
+
+function getStartText(mode) {
+  return mode === 'draw' ? '开始抽签' : '开始排号';
+}
+
+function getStopText(mode) {
+  return mode === 'draw' ? '结束抽签' : '结束排号';
+}
+
+function updateUi() {
+  const selectedMode = String(el.mode.value || 'queue');
+  const activeMode = isRunning ? serverMode : selectedMode;
+  const isDraw = activeMode === 'draw';
+  el.stallNumbersField.style.display = isDraw ? '' : 'none';
+  el.btnStartStop.textContent = isRunning ? getStopText(activeMode) : getStartText(activeMode);
+}
+
+function renderStatusSummary({ mode, stallType, queue, draw }) {
+  if (!el.statusSummary) return;
+  const safeType = stallType ? String(stallType) : '-';
+  const safeModeText = getModeText(mode);
+
+  if (mode === 'queue') {
+    const nextQueueNo = queue && typeof queue.nextQueueNo === 'number' ? queue.nextQueueNo : '-';
+    const queuedCount = queue && typeof queue.queuedCount === 'number' ? queue.queuedCount : '-';
+    const unqueuedCount = queue && typeof queue.unqueuedCount === 'number' ? queue.unqueuedCount : '-';
+    el.statusSummary.innerHTML = `
+      <div><span class="muted">类型：</span><span>${safeType}</span></div>
+      <div><span class="muted">模式：</span><span>${safeModeText}</span></div>
+      <div><span class="muted">当前序号：</span><span>${nextQueueNo}</span></div>
+      <div><span class="muted">已排号：</span><span>${queuedCount}</span></div>
+      <div><span class="muted">未排号：</span><span>${unqueuedCount}</span></div>
+    `;
+    return;
+  }
+
+  if (mode === 'draw') {
+    const cursor = draw && typeof draw.cursor === 'number' ? draw.cursor : '-';
+    const total = draw && typeof draw.total === 'number' ? draw.total : '-';
+    const drawnCount = draw && typeof draw.drawnCount === 'number' ? draw.drawnCount : '-';
+    const remainingCount = draw && typeof draw.remainingCount === 'number' ? draw.remainingCount : '-';
+    el.statusSummary.innerHTML = `
+      <div><span class="muted">类型：</span><span>${safeType}</span></div>
+      <div><span class="muted">模式：</span><span>${safeModeText}</span></div>
+      <div><span class="muted">当前序号：</span><span>${cursor}</span></div>
+      <div><span class="muted">摊位状态：</span><span>已中 ${drawnCount} / 总数 ${total} / 剩余 ${remainingCount}</span></div>
+    `;
+    return;
+  }
+
+  el.statusSummary.innerHTML = `
+    <div><span class="muted">类型：</span><span>${safeType}</span></div>
+    <div><span class="muted">模式：</span><span>${safeModeText}</span></div>
+  `;
+}
+
+function renderStallGrid({ mode, draw }) {
+  if (!el.stallGrid) return;
+
+  if (mode !== 'draw') {
+    el.stallGrid.style.display = 'none';
+    el.stallGrid.innerHTML = '';
+    return;
+  }
+
+  el.stallGrid.style.display = '';
+  const list = draw && Array.isArray(draw.stallNumbers) ? draw.stallNumbers : [];
+  const drawn = draw && Array.isArray(draw.drawnStallNos) ? draw.drawnStallNos : [];
+  const drawnSet = new Set(drawn.map((x) => String(x)));
+
+  el.stallGrid.innerHTML = '';
+  if (list.length === 0) {
+    el.stallGrid.innerHTML = '<div class="muted">暂无摊位号列表</div>';
+    return;
+  }
+
+  for (const n of list) {
+    const v = String(n);
+    const div = document.createElement('div');
+    div.className = `stall-cell ${drawnSet.has(v) ? 'is-drawn' : 'is-remaining'}`;
+    div.textContent = v;
+    el.stallGrid.appendChild(div);
+  }
+}
+
+async function refreshStatus() {
+  try {
+    const res = await socket.emitWithAck('bigscreen:getStatus', {});
+    if (!res || !res.ok) return;
+    renderStatusSummary(res);
+    renderStallGrid(res);
+  } catch {
+    // ignore
+  }
+}
+
+function setQtyFilterValue(qtyFilter) {
+  if (!el.qtyFilterGroup) return;
+  const v = String(qtyFilter || '').trim();
+  const input = el.qtyFilterGroup.querySelector(`input[name="qtyFilter"][value="${v}"]`);
+  if (input) input.checked = true;
+}
+
+function getQtyFilterValue() {
+  if (!el.qtyFilterGroup) return 'single';
+  const checked = el.qtyFilterGroup.querySelector('input[name="qtyFilter"]:checked');
+  return checked ? checked.value : 'single';
+}
+
+function parseNumbers(input) {
+  const v = String(input || '').trim();
+  if (!v) return [];
+
+  const rangeMatch = v.match(/^\s*(\d+)\s*-\s*(\d+)\s*$/);
+  if (rangeMatch) {
+    const start = Number(rangeMatch[1]);
+    const end = Number(rangeMatch[2]);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start <= 0 || end <= 0 || end < start) return [];
+    const out = [];
+    for (let i = start; i <= end; i += 1) out.push(i);
+    return out;
+  }
+
+  return v
+    .split(',')
+    .map((s) => Number(String(s).trim()))
+    .filter((n) => Number.isFinite(n));
+}
+
+async function applyDefaultRangeForType(stallType) {
+  const res = await socket.emitWithAck('bigscreen:getDefaultRange', { stallType });
+  if (!res || !res.ok) return;
+  el.stallNumbers.value = res.defaultRange;
+}
+
+socket.on('connect', () => setSocketStatus(true));
+socket.on('disconnect', () => setSocketStatus(false));
+
+socket.on('connect', async () => {
+  try {
+    const cfg = await socket.emitWithAck('bigscreen:getConfig', {});
+    if (!cfg || !cfg.ok) return;
+
+    if (cfg.stallType) el.stallType.value = String(cfg.stallType);
+    if (cfg.mode === 'queue' || cfg.mode === 'draw') el.mode.value = String(cfg.mode);
+    if (cfg.qtyFilter) setQtyFilterValue(cfg.qtyFilter);
+
+    serverMode = cfg.mode === 'queue' || cfg.mode === 'draw' ? cfg.mode : 'idle';
+    isRunning = serverMode === 'queue' || serverMode === 'draw';
+    updateUi();
+
+    const selectedMode = String(el.mode.value || 'queue');
+    if (selectedMode === 'draw') {
+      const stallType = String(el.stallType.value || '').trim();
+      if (stallType) await applyDefaultRangeForType(stallType);
+    }
+
+    await refreshStatus();
+  } catch {
+    // ignore
+  }
+});
+
+socket.on('server:currentType', async () => {
+  await refreshStatus();
+});
+
+socket.on('server:mode', (msg) => {
+  const mode = (msg && msg.mode) || 'idle';
+  const serverType = (msg && msg.stallType) || '';
+  if (msg && msg.qtyFilter) setQtyFilterValue(msg.qtyFilter);
+
+  serverMode = mode === 'queue' || mode === 'draw' ? mode : 'idle';
+  isRunning = serverMode === 'queue' || serverMode === 'draw';
+
+  updateUi();
+
+  if (serverMode === 'draw') {
+    const stallType = String(el.stallType.value || '').trim();
+    if (stallType) applyDefaultRangeForType(stallType);
+  }
+
+  refreshStatus();
+});
+
+socket.on('server:ownerQueued', async () => {
+  await refreshStatus();
+});
+
+socket.on('server:drawResultBroadcast', async () => {
+  await refreshStatus();
+});
+
+el.stallType.addEventListener('change', async () => {
+  const stallType = String(el.stallType.value || '').trim();
+  if (!stallType) return;
+  await applyDefaultRangeForType(stallType);
+});
+
+el.mode.addEventListener('change', async () => {
+  const mode = String(el.mode.value || 'queue');
+  updateUi();
+
+  if (mode === 'draw') {
+    const stallType = String(el.stallType.value || '').trim();
+    if (stallType) await applyDefaultRangeForType(stallType);
+  }
+});
+
+if (el.qtyFilterGroup) {
+  el.qtyFilterGroup.addEventListener('change', async () => {
+    await refreshStatus();
+  });
+}
+
+el.btnStartStop.addEventListener('click', async () => {
+  const stallType = String(el.stallType.value || '').trim();
+  const mode = String(el.mode.value || '').trim();
+  if (!stallType) {
+    el.hint.textContent = '请先选择摊位类型';
+    return;
+  }
+
+  if (isRunning) {
+    const res = await socket.emitWithAck('bigscreen:setConfig', { stallType, mode: 'idle' });
+    if (!res || !res.ok) {
+      el.hint.textContent = (res && res.message) || '结束失败';
+      return;
+    }
+    isRunning = false;
+    serverMode = 'idle';
+    updateUi();
+    el.hint.textContent = '已结束';
+    await refreshStatus();
+    return;
+  }
+
+  let stallNumbers = null;
+  if (mode === 'draw') {
+    let parsed = parseNumbers(el.stallNumbers.value);
+    if (parsed.length === 0) {
+      await applyDefaultRangeForType(stallType);
+      parsed = parseNumbers(el.stallNumbers.value);
+    }
+    if (parsed.length === 0) {
+      el.hint.textContent = '抽签模式必须填写摊位号列表';
+      return;
+    }
+    stallNumbers = parsed;
+  }
+
+  const qtyFilter = getQtyFilterValue();
+
+  const res = await socket.emitWithAck('bigscreen:setConfig', {
+    stallType,
+    mode,
+    stallNumbers,
+    qtyFilter,
+  });
+  if (!res || !res.ok) {
+    el.hint.textContent = (res && res.message) || '开始失败';
+    return;
+  }
+
+  isRunning = true;
+  serverMode = mode;
+  updateUi();
+  el.hint.textContent = `已开始：${stallType} / ${mode === 'queue' ? '排号' : '抽签'} / ${qtyFilter === 'single' ? '单摊位' : '多摊位'}`;
+  const url = mode === 'queue' ? './queue.html' : './draw.html';
+  window.open(url, '_blank', 'noopener');
+  await refreshStatus();
+});
+
+updateUi();

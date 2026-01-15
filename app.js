@@ -1,0 +1,608 @@
+const path = require('path');
+const http = require('http');
+const express = require('express');
+const { Server } = require('socket.io');
+
+const db = require('./db');
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST'],
+  },
+});
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+app.use(express.static(path.join(__dirname, 'public')));
+
+let currentStallType = '';
+let currentMode = 'idle';
+let currentQtyFilter = 'multi';
+let currentStallNumbers = null;
+const stallPools = new Map();
+const typeStates = new Map();
+const drawCursors = new Map();
+
+function pickContiguousAndRemove(pool, count) {
+  if (!Array.isArray(pool) || pool.length === 0) return [];
+  const c = Math.max(1, Number(count || 1));
+  if (pool.length < c) return [];
+
+  if (c === 1) {
+    const idx = Math.floor(Math.random() * pool.length);
+    const val = pool[idx];
+    pool.splice(idx, 1);
+    return [val];
+  }
+
+  const candidates = [];
+  let runStart = 0;
+  for (let i = 1; i <= pool.length; i += 1) {
+    const isBreak = i === pool.length || pool[i] !== pool[i - 1] + 1;
+    if (!isBreak) continue;
+
+    const runEnd = i - 1;
+    const runLen = runEnd - runStart + 1;
+    if (runLen >= c) {
+      for (let s = runStart; s <= runEnd - c + 1; s += 1) {
+        candidates.push(s);
+      }
+    }
+    runStart = i;
+  }
+
+  if (candidates.length === 0) return [];
+  const startIdx = candidates[Math.floor(Math.random() * candidates.length)];
+  return pool.splice(startIdx, c);
+}
+
+function getCurrentTypeSnapshot() {
+  if (!currentStallType) return { stallType: '', remaining: 0 };
+  const pool = stallPools.get(currentStallType);
+  return { stallType: currentStallType, remaining: Array.isArray(pool) ? pool.length : 0 };
+}
+
+function normalizeQtyFilter(v) {
+  const s = String(v || '').trim();
+  if (s === 'single' || s === 'multi') return s;
+  return 'single';
+}
+
+function toTypeStatesPayload() {
+  return Array.from(typeStates.entries()).map(([stallType, s]) => ({ stallType, ...s }));
+}
+
+function getModeSnapshot() {
+  return { stallType: currentStallType, mode: currentMode, qtyFilter: currentQtyFilter };
+}
+
+async function buildStatusSnapshot() {
+  const stallType = String(currentStallType || '').trim();
+  const mode = currentMode;
+  const qtyFilter = currentQtyFilter;
+
+  if (!stallType) {
+    return { ok: true, stallType: '', mode: mode || 'idle', qtyFilter };
+  }
+
+  if (mode === 'queue') {
+    const nextQueueNo = await db.getNextQueueNoByTypeAndQtyFilter({ stallType, qtyFilter });
+    const queuedCount = await db.countQueuedOwnersByType(stallType, qtyFilter);
+    const unqueuedCount = await db.countUnqueuedOwnersByType(stallType, qtyFilter);
+    return {
+      ok: true,
+      stallType,
+      mode,
+      qtyFilter,
+      queue: { nextQueueNo, queuedCount, unqueuedCount },
+    };
+  }
+
+  if (mode === 'draw') {
+    const cursor = drawCursors.get(stallType) || 0;
+    const stallNumbers = Array.isArray(currentStallNumbers) ? currentStallNumbers : [];
+    const drawnStallNos = await db.getDrawnStallNosByType(stallType);
+
+    const pool = stallPools.get(stallType);
+    const remainingCount = Array.isArray(pool) ? pool.length : 0;
+    const total = stallNumbers.length;
+    const drawnCount = Math.max(0, total - remainingCount);
+
+    return {
+      ok: true,
+      stallType,
+      mode,
+      qtyFilter,
+      draw: {
+        cursor,
+        total,
+        drawnCount,
+        remainingCount,
+        stallNumbers,
+        drawnStallNos,
+      },
+    };
+  }
+
+  return { ok: true, stallType, mode: mode || 'idle', qtyFilter };
+}
+
+function safeJsonParse(v, fallback) {
+  try {
+    return JSON.parse(String(v));
+  } catch {
+    return fallback;
+  }
+}
+
+async function persistRuntimeConfig() {
+  await db.setAppConfig('config:stallType', currentStallType);
+  await db.setAppConfig('config:mode', currentMode);
+  await db.setAppConfig('config:qtyFilter', currentQtyFilter);
+  await db.setAppConfig('config:stallNumbers', currentStallNumbers ? JSON.stringify(currentStallNumbers) : '');
+}
+
+async function restoreRuntimeConfigFromDb() {
+  const stallType = String((await db.getAppConfig('config:stallType')) || '').trim();
+  const mode = String((await db.getAppConfig('config:mode')) || 'idle').trim();
+  const qtyFilter = normalizeQtyFilter(await db.getAppConfig('config:qtyFilter'));
+  const stallNumbersRaw = await db.getAppConfig('config:stallNumbers');
+  const stallNumbers = Array.isArray(safeJsonParse(stallNumbersRaw || '[]', [])) ? safeJsonParse(stallNumbersRaw || '[]', []) : [];
+
+  if (!stallType) return;
+
+  currentStallType = stallType;
+  currentMode = mode === 'queue' || mode === 'draw' ? mode : 'idle';
+  currentQtyFilter = qtyFilter;
+  currentStallNumbers = stallNumbers.length > 0 ? stallNumbers : null;
+
+  if (currentStallType) {
+    drawCursors.set(currentStallType, 0);
+  }
+
+  if (currentMode === 'draw' && Array.isArray(currentStallNumbers) && currentStallNumbers.length > 0) {
+    const drawn = new Set((await db.getDrawnStallNosByType(stallType)).map((x) => Number(x)));
+    const pool = currentStallNumbers
+      .map((n) => Number(n))
+      .filter((n) => Number.isFinite(n))
+      .filter((n) => !drawn.has(Number(n)))
+      .sort((a, b) => a - b);
+    stallPools.set(stallType, pool);
+    typeStates.set(stallType, { started: true, ended: pool.length === 0, remaining: pool.length });
+    return;
+  }
+
+  if (currentMode === 'queue') {
+    typeStates.set(stallType, { started: true, ended: false, remaining: 0 });
+    return;
+  }
+
+  typeStates.set(stallType, { started: false, ended: false, remaining: 0 });
+}
+
+async function findNextDrawableOwner({ stallType }) {
+  const list = await db.getQueuedListByType(stallType, currentQtyFilter);
+  const cursor = drawCursors.get(stallType) || 0;
+
+  for (const o of list) {
+    const q = Number(o.queueNo || 0);
+    if (!q || q < cursor) continue;
+    const drawnCount = await db.countLotteryResultsByOwnerType({ idCard: o.idCard, stallType });
+    const qty = Number(o.qty || 1);
+    if (drawnCount < qty) {
+      return { ...o, drawnCount };
+    }
+  }
+  return null;
+}
+
+async function doDrawForOwner({ stallType, owner }) {
+  const idCard = String(owner.idCard || '').trim();
+  const alreadyDrawn = await db.countLotteryResultsByOwnerType({ idCard, stallType });
+  const qty = Number(owner.qty || 1);
+  if (alreadyDrawn >= qty) {
+    return { ok: false, message: '该类型已抽完次数' };
+  }
+
+  const pool = stallPools.get(stallType);
+  if (!pool || pool.length === 0) {
+    return { ok: false, message: '抽签完毕' };
+  }
+
+  const needCount = Math.max(1, qty - alreadyDrawn);
+  if (pool.length < needCount) {
+    return { ok: false, message: '剩余摊位号不足' };
+  }
+
+  const stallNos = pickContiguousAndRemove(pool, needCount);
+  if (!stallNos || stallNos.length !== needCount) {
+    return { ok: false, message: '无法从剩余号段中抽取连续摊位' };
+  }
+
+  await db.insertLotteryResultsBulk({
+    name: owner.name,
+    idCard: owner.idCard,
+    stallType,
+    queueNo: owner.queueNo,
+    stallNos,
+  });
+
+  const drawnCount = alreadyDrawn + needCount;
+  drawCursors.set(stallType, Number(owner.queueNo || 0) + 1);
+
+  typeStates.set(stallType, {
+    started: true,
+    ended: pool.length === 0,
+    remaining: pool.length,
+  });
+
+  return {
+    ok: true,
+    message: '抽签成功',
+    result: {
+      name: owner.name,
+      idCard: owner.idCard,
+      stallType,
+      queueNo: owner.queueNo,
+      stallNos,
+    },
+    draw: {
+      qty,
+      drawnCount,
+      remainingCount: Math.max(0, qty - drawnCount),
+    },
+    remaining: pool.length,
+  };
+}
+
+io.on('connection', (socket) => {
+  console.log('Socket连接:', socket.id);
+
+  socket.emit('server:currentType', getCurrentTypeSnapshot());
+  socket.emit('server:typeStates', toTypeStatesPayload());
+  socket.emit('server:mode', getModeSnapshot());
+
+  socket.on('client:getCurrentType', (payload = {}, ack) => {
+    if (typeof ack === 'function') ack({ ok: true, ...getCurrentTypeSnapshot() });
+  });
+
+  socket.on('bigscreen:getConfig', (payload = {}, ack) => {
+    if (typeof ack === 'function') {
+      ack({
+        ok: true,
+        stallType: currentStallType,
+        mode: currentMode,
+        qtyFilter: currentQtyFilter,
+        stallNumbers: currentStallNumbers,
+      });
+    }
+  });
+
+  socket.on('bigscreen:getDefaultRange', async (payload = {}, ack) => {
+    if (typeof ack === 'function') {
+      const stallType = String(payload.stallType || '').trim();
+      let defaultRange = '';
+
+      const totalQty = await db.sumQtyByType(stallType);
+      defaultRange = `1-${totalQty}`;
+
+      ack({
+        ok: true,
+        defaultRange,
+      });
+    }
+  });
+
+  socket.on('bigscreen:setConfig', async (payload = {}, ack) => {
+    try {
+      const stallType = String(payload.stallType || '').trim();
+      const mode = String(payload.mode || '').trim();
+      if (!stallType || (mode !== 'idle' && mode !== 'queue' && mode !== 'draw')) {
+        if (typeof ack === 'function') ack({ ok: false, message: '参数错误' });
+        return;
+      }
+      const qtyFilter = normalizeQtyFilter(payload.qtyFilter || currentQtyFilter);
+
+      currentStallType = stallType;
+      currentMode = mode;
+      currentQtyFilter = qtyFilter;
+
+      if (mode === 'draw') {
+        drawCursors.set(stallType, 0);
+      } else {
+        drawCursors.delete(stallType);
+      }
+
+      if (mode !== 'draw') {
+        currentStallNumbers = null;
+      }
+
+      if (mode === 'draw' && Array.isArray(payload.stallNumbers)) {
+        const stallNumbers = payload.stallNumbers.map((n) => Number(n)).filter((n) => Number.isFinite(n));
+        if (stallNumbers.length > 0) {
+          currentStallNumbers = stallNumbers;
+          const drawn = new Set((await db.getDrawnStallNosByType(stallType)).map((x) => Number(x)));
+          const pool = stallNumbers
+            .filter((n) => !drawn.has(Number(n)))
+            .map((n) => Number(n))
+            .filter((n) => Number.isFinite(n))
+            .sort((a, b) => a - b);
+          stallPools.set(stallType, pool);
+          typeStates.set(stallType, { started: true, ended: pool.length === 0, remaining: pool.length });
+        }
+      }
+
+      if (mode === 'queue') {
+        typeStates.set(stallType, { started: true, ended: false, remaining: 0 });
+      }
+
+      if (mode === 'idle') {
+        typeStates.set(stallType, { started: false, ended: false, remaining: 0 });
+      }
+
+      await persistRuntimeConfig();
+
+      io.emit('server:mode', getModeSnapshot());
+      io.emit('server:currentType', getCurrentTypeSnapshot());
+      io.emit('server:typeStates', toTypeStatesPayload());
+
+      if (typeof ack === 'function') ack({ ok: true, stallType, mode, qtyFilter });
+    } catch (e) {
+      console.error(e);
+      if (typeof ack === 'function') ack({ ok: false, message: '服务异常' });
+    }
+  });
+
+  socket.on('bigscreen:getSnapshot', async (payload = {}, ack) => {
+    try {
+      const stallType = String(payload.stallType || currentStallType || '').trim();
+      if (!stallType) {
+        if (typeof ack === 'function') ack({ ok: false, message: '未选择摊位类型' });
+        return;
+      }
+      const queued = await db.getQueuedListByType(stallType, currentQtyFilter);
+      const unqueued = await db.getUnqueuedOwnersByType(stallType, currentQtyFilter);
+      if (typeof ack === 'function') ack({ ok: true, stallType, qtyFilter: currentQtyFilter, queued, unqueued });
+    } catch (e) {
+      console.error(e);
+      if (typeof ack === 'function') ack({ ok: false, message: '服务异常' });
+    }
+  });
+
+  socket.on('bigscreen:getUnqueued', async (payload = {}, ack) => {
+    try {
+      const stallType = String(payload.stallType || currentStallType || '').trim();
+      if (!stallType) {
+        if (typeof ack === 'function') ack({ ok: false, message: '未选择摊位类型' });
+        return;
+      }
+      const list = await db.getUnqueuedOwnersByType(stallType, currentQtyFilter);
+      if (typeof ack === 'function') ack({ ok: true, stallType, qtyFilter: currentQtyFilter, list });
+    } catch (e) {
+      console.error(e);
+      if (typeof ack === 'function') ack({ ok: false, message: '服务异常' });
+    }
+  });
+
+  socket.on('bigscreen:stallClass:list', async (payload = {}, ack) => {
+    try {
+      const list = await db.getStallClasses();
+      if (typeof ack === 'function') ack({ ok: true, list });
+    } catch (e) {
+      console.error(e);
+      if (typeof ack === 'function') ack({ ok: false, message: '服务异常' });
+    }
+  });
+
+  socket.on('bigscreen:stallClass:add', async (payload = {}, ack) => {
+    try {
+      await db.addStallClass(payload);
+      const list = await db.getStallClasses();
+      if (typeof ack === 'function') ack({ ok: true, list });
+    } catch (e) {
+      console.error(e);
+      if (typeof ack === 'function') ack({ ok: false, message: '添加失败' });
+    }
+  });
+
+  socket.on('bigscreen:stallClass:update', async (payload = {}, ack) => {
+    try {
+      await db.updateStallClass(payload);
+      const list = await db.getStallClasses();
+      if (typeof ack === 'function') ack({ ok: true, list });
+    } catch (e) {
+      console.error(e);
+      if (typeof ack === 'function') ack({ ok: false, message: '更新失败' });
+    }
+  });
+
+  socket.on('bigscreen:stallClass:delete', async (payload = {}, ack) => {
+    try {
+      await db.deleteStallClass(payload.id);
+      const list = await db.getStallClasses();
+      if (typeof ack === 'function') ack({ ok: true, list });
+    } catch (e) {
+      console.error(e);
+      if (typeof ack === 'function') ack({ ok: false, message: '删除失败' });
+    }
+  });
+
+  socket.on('mobile:login', async (payload = {}, ack) => {
+    try {
+      const idCard = String(payload.idCard || '').trim();
+      const name = String(payload.name || '').trim();
+      if (!idCard || !name) {
+        if (typeof ack === 'function') ack({ ok: false, message: '信息不完整' });
+        return;
+      }
+
+      const result = await db.validateOwnerLogin({ idCard, name });
+      if (!result.ok) {
+        if (typeof ack === 'function') ack(result);
+        return;
+      }
+
+      const ownersWithDrawn = await Promise.all(
+        result.owners.map(async (o) => {
+          const drawnCount = await db.countLotteryResultsByOwnerType({ idCard: o.idCard, stallType: o.stallType });
+          return { ...o, drawnCount };
+        })
+      );
+
+      if (typeof ack === 'function') ack({ ok: true, message: '验证通过', owners: ownersWithDrawn });
+    } catch (e) {
+      console.error(e);
+      if (typeof ack === 'function') ack({ ok: false, message: '服务异常' });
+    }
+  });
+
+  socket.on('mobile:queue', async (payload = {}, ack) => {
+    try {
+      const idCard = String(payload.idCard || '').trim();
+      const stallType = String(payload.stallType || '').trim();
+      if (!idCard || !stallType) {
+        if (typeof ack === 'function') ack({ ok: false, message: '信息不完整' });
+        return;
+      }
+      if (!currentStallType || stallType !== currentStallType) {
+        if (typeof ack === 'function') ack({ ok: false, message: '当前不是该类型抽签阶段' });
+        return;
+      }
+
+      if (currentMode !== 'queue') {
+        if (typeof ack === 'function') ack({ ok: false, message: '当前不是排号模式' });
+        return;
+      }
+
+      const owner = await db.getOwnerByIdCardAndType(idCard, stallType);
+      if (!owner) {
+        if (typeof ack === 'function') ack({ ok: false, message: '未找到报名信息' });
+        return;
+      }
+
+      const qty = Number(owner.qty || 1);
+      if (currentQtyFilter === 'single' && qty !== 1) {
+        if (typeof ack === 'function') ack({ ok: false, message: '当前仅允许单摊位（认购数量 = 1）用户排号' });
+        return;
+      }
+      if (currentQtyFilter === 'multi' && qty <= 1) {
+        if (typeof ack === 'function') ack({ ok: false, message: '当前仅允许多摊位（认购数量 > 1）用户排号' });
+        return;
+      }
+
+      let queueNo = owner.queueNo;
+      if (!owner.isQueued) {
+        const allocated = await db.allocateQueueNoAndQueueOwner({ idCard, stallType, qtyFilter: currentQtyFilter });
+        if (!allocated || !allocated.ok || !allocated.queueNo) {
+          if (typeof ack === 'function') ack({ ok: false, message: (allocated && allocated.message) || '排号失败' });
+          return;
+        }
+        queueNo = allocated.queueNo;
+      }
+
+      const updated = await db.getOwnerByIdCardAndType(idCard, stallType);
+
+      const drawnCount = await db.countLotteryResultsByOwnerType({ idCard, stallType });
+      const res = { ok: true, message: '排号成功', owner: { ...updated, drawnCount } };
+
+      socket.emit('server:queueUpdated', res);
+      io.emit('server:ownerQueued', { stallType, owner: updated });
+
+      if (typeof ack === 'function') ack(res);
+    } catch (e) {
+      console.error(e);
+      if (typeof ack === 'function') ack({ ok: false, message: '服务异常' });
+    }
+  });
+
+  socket.on('bigscreen:draw:next', async (payload = {}, ack) => {
+    try {
+      const stallType = String(payload.stallType || currentStallType || '').trim();
+      if (!stallType) {
+        if (typeof ack === 'function') ack({ ok: false, message: '未选择摊位类型' });
+        return;
+      }
+      if (currentMode !== 'draw') {
+        if (typeof ack === 'function') ack({ ok: false, message: '当前不是抽签模式' });
+        return;
+      }
+      const owner = await findNextDrawableOwner({ stallType });
+      if (!owner) {
+        if (typeof ack === 'function') ack({ ok: true, owner: null, message: '暂无可抽签人员' });
+        return;
+      }
+      if (typeof ack === 'function') ack({ ok: true, owner });
+    } catch (e) {
+      console.error(e);
+      if (typeof ack === 'function') ack({ ok: false, message: '服务异常' });
+    }
+  });
+
+  socket.on('bigscreen:draw:doDraw', async (payload = {}, ack) => {
+    try {
+      const stallType = String(payload.stallType || currentStallType || '').trim();
+      const idCard = String(payload.idCard || '').trim();
+      if (!stallType || !idCard) {
+        if (typeof ack === 'function') ack({ ok: false, message: '参数错误' });
+        return;
+      }
+      if (currentMode !== 'draw') {
+        if (typeof ack === 'function') ack({ ok: false, message: '当前不是抽签模式' });
+        return;
+      }
+
+      const owner = await db.getOwnerByIdCardAndType(idCard, stallType);
+      if (!owner) {
+        if (typeof ack === 'function') ack({ ok: false, message: '未找到报名信息' });
+        return;
+      }
+
+      const qty = Number(owner.qty || 1);
+      if (currentQtyFilter === 'single' && qty !== 1) {
+        if (typeof ack === 'function') ack({ ok: false, message: '当前仅允许单摊位（认购数量 = 1）用户抽签' });
+        return;
+      }
+      if (currentQtyFilter === 'multi' && qty <= 1) {
+        if (typeof ack === 'function') ack({ ok: false, message: '当前仅允许多摊位（认购数量 > 1）用户抽签' });
+        return;
+      }
+      if (!owner.isQueued || !owner.queueNo) {
+        if (typeof ack === 'function') ack({ ok: false, message: '该用户未排号' });
+        return;
+      }
+
+      const res = await doDrawForOwner({ stallType, owner });
+      if (res.ok) {
+        io.emit('server:drawResult', res);
+        io.emit('server:drawResultBroadcast', res);
+        io.emit('server:currentType', { stallType, remaining: res.remaining });
+        io.emit('server:typeStates', toTypeStatesPayload());
+      }
+      if (typeof ack === 'function') ack(res);
+    } catch (e) {
+      console.error(e);
+      if (typeof ack === 'function') ack({ ok: false, message: '服务异常' });
+    }
+  });
+
+  socket.on('disconnect', (reason) => {
+    console.log('Socket断开:', socket.id, reason);
+  });
+});
+
+const PORT = Number(process.env.PORT || 3000);
+
+(async () => {
+  await db.init();
+  await restoreRuntimeConfigFromDb();
+
+  server.listen(PORT, () => {
+    console.log(`服务启动成功: http://localhost:${PORT}`);
+    console.log(`大屏端: http://localhost:${PORT}/bigscreen/index.html`);
+    console.log(`手机端: http://localhost:${PORT}/mobile/index.html`);
+  });
+})();

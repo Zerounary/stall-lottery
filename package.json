@@ -1,0 +1,23 @@
+{
+  "name": "stall-lottery",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "init-data": "node scripts/init-data.js",
+    "init-stall-owners": "node scripts/import-owners-with-class.js",
+    "import-xlsx": "node scripts/import-from-xlsx.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1",
+    "sqlite3": "^5.1.7",
+    "xlsx": "^0.18.5"
+  }
+}
