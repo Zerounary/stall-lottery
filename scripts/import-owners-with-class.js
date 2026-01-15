@@ -46,7 +46,7 @@ const FILES_DIR = path.join(__dirname, 'files');
                 const stallType = String(row[0] || '').trim();
                 const sellClass = String(row[1] || '').trim();
                 const name = String(row[2] || '').trim();
-                const idCard = String(row[3] || '').trim();
+                const idCard = String(row[3] || '').trim().toUpperCase();
                 const qtyVal = row[4];
 
                 if (!stallType || !name || !idCard) continue;
