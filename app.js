@@ -71,6 +71,75 @@ app.get('/api/export/lottery-result.xlsx', async (req, res) => {
   }
 });
 
+app.get('/api/export/stall-class.xlsx', async (req, res) => {
+  try {
+    const rows = await db.getStallClasses();
+    const rangesById = new Map();
+    const grouped = new Map();
+    for (const r of rows) {
+      const type = String(r.stall_type || '').trim();
+      if (!grouped.has(type)) grouped.set(type, []);
+      grouped.get(type).push(r);
+    }
+    for (const [type, list] of grouped.entries()) {
+      const sorted = list.slice().sort((a, b) => {
+        const ao = Number(a.order_no || 0);
+        const bo = Number(b.order_no || 0);
+        if (ao !== bo) return ao - bo;
+        return Number(a.id || 0) - Number(b.id || 0);
+      });
+      let cursor = 1;
+      for (const row of sorted) {
+        const count = Math.max(0, Number(row.stall_count || 0));
+        const start = cursor;
+        const end = count > 0 ? cursor + count - 1 : 0;
+        cursor = end + 1;
+        rangesById.set(row.id, { start, end, count, type });
+      }
+    }
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('摊位分类');
+
+    ws.columns = [
+      { header: '摊位类型', key: 'stallType', width: 16 },
+      { header: '经营分类', key: 'sellClass', width: 18 },
+      { header: '号段', key: 'range', width: 16 },
+      { header: '摊位数', key: 'stallCount', width: 12 },
+      { header: '顺序', key: 'orderNo', width: 10 },
+      { header: '需求人数', key: 'personCount', width: 12 },
+    ];
+
+    for (const r of rows) {
+      const rangeInfo = rangesById.get(r.id) || null;
+      const rangeText =
+        rangeInfo && rangeInfo.count > 0 ? `${rangeInfo.start}-${rangeInfo.end}` : '-';
+      ws.addRow({
+        stallType: r.stall_type,
+        sellClass: r.sell_class,
+        range: rangeText,
+        stallCount: r.stall_count,
+        orderNo: r.order_no,
+        personCount: r.person_count,
+      });
+    }
+
+    ws.getRow(1).font = { bold: true };
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+
+    const filename = '摊位分类.xlsx';
+    const filenameStar = encodeURIComponent(filename);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${filenameStar}`);
+
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (e) {
+    console.error(e);
+    res.status(500).send('export failed');
+  }
+});
+
 let currentStallType = '';
 let currentMode = 'idle';
 let currentQtyFilter = 'multi';

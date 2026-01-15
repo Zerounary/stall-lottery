@@ -8,6 +8,7 @@ const el = {
   stallNumbers: document.getElementById('stallNumbers'),
   btnStartStop: document.getElementById('btnStartStop'),
   btnExportLotteryResult: document.getElementById('btnExportLotteryResult'),
+  btnExportStallClass: document.getElementById('btnExportStallClass'),
   hint: document.getElementById('hint'),
   statusSummary: document.getElementById('statusSummary'),
   stallGrid: document.getElementById('stallGrid'),
@@ -432,6 +433,12 @@ if (el.btnExportLotteryResult) {
     }
     const url = `/api/export/lottery-result.xlsx?stallType=${encodeURIComponent(stallType)}`;
     window.open(url, '_blank', 'noopener');
+  });
+}
+
+if (el.btnExportStallClass) {
+  el.btnExportStallClass.addEventListener('click', () => {
+    window.open('/api/export/stall-class.xlsx', '_blank', 'noopener');
   });
 }
 
