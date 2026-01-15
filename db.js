@@ -126,9 +126,10 @@ async function getAppConfig(key) {
 
 async function getOwnerByIdCardAndType(idCard, stallType) {
   return get(
-    `SELECT id, name, id_card AS idCard, stall_type AS stallType, qty, queue_no AS queueNo, is_queued AS isQueued, created_at AS createdAt
+    `SELECT id, name, id_card AS idCard, stall_type AS stallType, qty, sell_class AS sellClass, queue_no AS queueNo, is_queued AS isQueued, created_at AS createdAt
      FROM stall_owner
-     WHERE id_card = ? AND stall_type = ?`,
+     WHERE id_card = ? AND stall_type = ?
+     LIMIT 1`,
     [idCard, stallType]
   );
 }
@@ -282,11 +283,11 @@ async function getOwnerByQueueNo({ stallType, queueNo }) {
   );
 }
 
-async function insertLotteryResult({ name, idCard, stallType, queueNo, stallNo }) {
+async function insertLotteryResult({ name, idCard, stallType, sellClass, queueNo, stallNo }) {
   return run(
-    `INSERT INTO lottery_result (name, id_card, stall_type, queue_no, stall_no)
-     VALUES (?, ?, ?, ?, ?)`,
-    [name, idCard, stallType, queueNo, stallNo]
+    `INSERT INTO lottery_result (name, id_card, stall_type, sell_class, queue_no, stall_no)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [name, idCard, stallType, String(sellClass || ''), queueNo, stallNo]
   );
 }
 
@@ -325,13 +326,13 @@ async function sumQtyByTypeAndQtyFilter(stallType, qtyFilter = null) {
   return row && row.totalQty ? Number(row.totalQty) : 0;
 }
 
-async function insertLotteryResultsBulk({ name, idCard, stallType, queueNo, stallNos }) {
+async function insertLotteryResultsBulk({ name, idCard, stallType, sellClass, queueNo, stallNos }) {
   if (!Array.isArray(stallNos) || stallNos.length === 0) return { inserted: 0 };
 
   await run('BEGIN TRANSACTION');
   try {
     for (const stallNo of stallNos) {
-      await insertLotteryResult({ name, idCard, stallType, queueNo, stallNo: String(stallNo) });
+      await insertLotteryResult({ name, idCard, stallType, sellClass, queueNo, stallNo: String(stallNo) });
     }
     await run('COMMIT');
     return { inserted: stallNos.length };

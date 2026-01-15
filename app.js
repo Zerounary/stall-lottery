@@ -23,9 +23,65 @@ let currentStallType = '';
 let currentMode = 'idle';
 let currentQtyFilter = 'multi';
 let currentStallNumbers = null;
+// Map<stallType, Map<sellClass, number[]>>
 const stallPools = new Map();
 const typeStates = new Map();
 const drawCursors = new Map();
+
+function getTypePoolMap(stallType) {
+  const m = stallPools.get(stallType);
+  return m && typeof m === 'object' ? m : null;
+}
+
+function getTypeRemaining(stallType) {
+  const m = getTypePoolMap(stallType);
+  if (!m) return 0;
+  let total = 0;
+  for (const pool of m.values()) {
+    total += Array.isArray(pool) ? pool.length : 0;
+  }
+  return total;
+}
+
+async function buildPoolsForTypeFromStallClass(stallType) {
+  const list = await db.getStallClasses();
+  const rows = Array.isArray(list) ? list.filter((r) => String(r.stall_type || '').trim() === stallType) : [];
+  rows.sort((a, b) => {
+    const ao = Number(a.order_no || 0);
+    const bo = Number(b.order_no || 0);
+    if (ao !== bo) return ao - bo;
+    return Number(a.id || 0) - Number(b.id || 0);
+  });
+
+  const total = rows.reduce((sum, r) => sum + Math.max(0, Number(r.stall_count || 0)), 0);
+  const stallNumbers = Array.from({ length: total }, (_, i) => i + 1);
+
+  const drawn = new Set((await db.getDrawnStallNosByType(stallType)).map((x) => Number(x)).filter((n) => Number.isFinite(n)));
+
+  const poolsByClass = new Map();
+  let cursor = 1;
+  for (const r of rows) {
+    const sellClass = String(r.sell_class || '').trim();
+    const count = Math.max(0, Number(r.stall_count || 0));
+    const start = cursor;
+    const end = cursor + count - 1;
+    cursor = end + 1;
+
+    const pool = [];
+    for (let n = start; n <= end; n += 1) {
+      if (!drawn.has(n)) pool.push(n);
+    }
+    poolsByClass.set(sellClass, pool);
+  }
+
+  stallPools.set(stallType, poolsByClass);
+  currentStallNumbers = stallNumbers;
+
+  return {
+    total,
+    remaining: getTypeRemaining(stallType),
+  };
+}
 
 function pickContiguousAndRemove(pool, count) {
   if (!Array.isArray(pool) || pool.length === 0) return [];
@@ -62,8 +118,7 @@ function pickContiguousAndRemove(pool, count) {
 
 function getCurrentTypeSnapshot() {
   if (!currentStallType) return { stallType: '', remaining: 0 };
-  const pool = stallPools.get(currentStallType);
-  return { stallType: currentStallType, remaining: Array.isArray(pool) ? pool.length : 0 };
+  return { stallType: currentStallType, remaining: getTypeRemaining(currentStallType) };
 }
 
 function normalizeQtyFilter(v) {
@@ -107,8 +162,7 @@ async function buildStatusSnapshot() {
     const stallNumbers = Array.isArray(currentStallNumbers) ? currentStallNumbers : [];
     const drawnStallNos = await db.getDrawnStallNosByType(stallType);
 
-    const pool = stallPools.get(stallType);
-    const remainingCount = Array.isArray(pool) ? pool.length : 0;
+    const remainingCount = getTypeRemaining(stallType);
     const total = stallNumbers.length;
     const drawnCount = Math.max(0, total - remainingCount);
 
@@ -150,37 +204,32 @@ async function restoreRuntimeConfigFromDb() {
   const stallType = String((await db.getAppConfig('config:stallType')) || '').trim();
   const mode = String((await db.getAppConfig('config:mode')) || 'idle').trim();
   const qtyFilter = normalizeQtyFilter(await db.getAppConfig('config:qtyFilter'));
-  const stallNumbersRaw = await db.getAppConfig('config:stallNumbers');
-  const stallNumbers = Array.isArray(safeJsonParse(stallNumbersRaw || '[]', [])) ? safeJsonParse(stallNumbersRaw || '[]', []) : [];
+  await db.getAppConfig('config:stallNumbers');
 
   if (!stallType) return;
 
   currentStallType = stallType;
   currentMode = mode === 'queue' || mode === 'draw' ? mode : 'idle';
   currentQtyFilter = qtyFilter;
-  currentStallNumbers = stallNumbers.length > 0 ? stallNumbers : null;
+  currentStallNumbers = null;
 
   if (currentStallType) {
     drawCursors.set(currentStallType, 0);
   }
 
-  if (currentMode === 'draw' && Array.isArray(currentStallNumbers) && currentStallNumbers.length > 0) {
-    const drawn = new Set((await db.getDrawnStallNosByType(stallType)).map((x) => Number(x)));
-    const pool = currentStallNumbers
-      .map((n) => Number(n))
-      .filter((n) => Number.isFinite(n))
-      .filter((n) => !drawn.has(Number(n)))
-      .sort((a, b) => a - b);
-    stallPools.set(stallType, pool);
-    typeStates.set(stallType, { started: true, ended: pool.length === 0, remaining: pool.length });
+  if (currentMode === 'draw') {
+    const info = await buildPoolsForTypeFromStallClass(stallType);
+    typeStates.set(stallType, { started: true, ended: info.remaining === 0, remaining: info.remaining });
     return;
   }
 
   if (currentMode === 'queue') {
+    stallPools.delete(stallType);
     typeStates.set(stallType, { started: true, ended: false, remaining: 0 });
     return;
   }
 
+  stallPools.delete(stallType);
   typeStates.set(stallType, { started: false, ended: false, remaining: 0 });
 }
 
@@ -208,7 +257,13 @@ async function doDrawForOwner({ stallType, owner }) {
     return { ok: false, message: '该类型已抽完次数' };
   }
 
-  const pool = stallPools.get(stallType);
+  const sellClass = String(owner.sellClass || '').trim();
+  if (!sellClass) {
+    return { ok: false, message: '该用户缺少品类信息' };
+  }
+
+  const typePoolMap = getTypePoolMap(stallType);
+  const pool = typePoolMap ? typePoolMap.get(sellClass) : null;
   if (!pool || pool.length === 0) {
     return { ok: false, message: '抽签完毕' };
   }
@@ -227,6 +282,7 @@ async function doDrawForOwner({ stallType, owner }) {
     name: owner.name,
     idCard: owner.idCard,
     stallType,
+    sellClass,
     queueNo: owner.queueNo,
     stallNos,
   });
@@ -236,9 +292,11 @@ async function doDrawForOwner({ stallType, owner }) {
 
   typeStates.set(stallType, {
     started: true,
-    ended: pool.length === 0,
-    remaining: pool.length,
+    ended: getTypeRemaining(stallType) === 0,
+    remaining: getTypeRemaining(stallType),
   });
+
+  const typeRemaining = getTypeRemaining(stallType);
 
   return {
     ok: true,
@@ -255,7 +313,7 @@ async function doDrawForOwner({ stallType, owner }) {
       drawnCount,
       remainingCount: Math.max(0, qty - drawnCount),
     },
-    remaining: pool.length,
+    remaining: typeRemaining,
   };
 }
 
@@ -319,28 +377,21 @@ io.on('connection', (socket) => {
 
       if (mode !== 'draw') {
         currentStallNumbers = null;
+        stallPools.delete(stallType);
       }
 
-      if (mode === 'draw' && Array.isArray(payload.stallNumbers)) {
-        const stallNumbers = payload.stallNumbers.map((n) => Number(n)).filter((n) => Number.isFinite(n));
-        if (stallNumbers.length > 0) {
-          currentStallNumbers = stallNumbers;
-          const drawn = new Set((await db.getDrawnStallNosByType(stallType)).map((x) => Number(x)));
-          const pool = stallNumbers
-            .filter((n) => !drawn.has(Number(n)))
-            .map((n) => Number(n))
-            .filter((n) => Number.isFinite(n))
-            .sort((a, b) => a - b);
-          stallPools.set(stallType, pool);
-          typeStates.set(stallType, { started: true, ended: pool.length === 0, remaining: pool.length });
-        }
+      if (mode === 'draw') {
+        const info = await buildPoolsForTypeFromStallClass(stallType);
+        typeStates.set(stallType, { started: true, ended: info.remaining === 0, remaining: info.remaining });
       }
 
       if (mode === 'queue') {
+        stallPools.delete(stallType);
         typeStates.set(stallType, { started: true, ended: false, remaining: 0 });
       }
 
       if (mode === 'idle') {
+        stallPools.delete(stallType);
         typeStates.set(stallType, { started: false, ended: false, remaining: 0 });
       }
 

@@ -44,7 +44,7 @@ function updateUi() {
   const selectedMode = String(el.mode.value || 'queue');
   const activeMode = isRunning ? serverMode : selectedMode;
   const isDraw = activeMode === 'draw';
-  el.stallNumbersField.style.display = isDraw ? '' : 'none';
+  el.stallNumbersField.style.display = 'none';
   el.btnStartStop.textContent = isRunning ? getStopText(activeMode) : getStartText(activeMode);
 }
 
@@ -318,8 +318,7 @@ socket.on('connect', async () => {
 
     const selectedMode = String(el.mode.value || 'queue');
     if (selectedMode === 'draw') {
-      const stallType = String(el.stallType.value || '').trim();
-      if (stallType) await applyDefaultRangeForType(stallType);
+      el.hint.textContent = '抽签模式摊位号范围由“摊位分类”配置自动生成';
     }
 
     await refreshStallClassList();
@@ -363,17 +362,16 @@ socket.on('server:drawResultBroadcast', async () => {
 el.stallType.addEventListener('change', async () => {
   const stallType = String(el.stallType.value || '').trim();
   if (!stallType) return;
-  await applyDefaultRangeForType(stallType);
+  if (String(el.mode.value || 'queue') === 'draw') {
+    el.hint.textContent = '抽签模式摊位号范围由“摊位分类”配置自动生成';
+  }
 });
 
 el.mode.addEventListener('change', async () => {
   const mode = String(el.mode.value || 'queue');
   updateUi();
 
-  if (mode === 'draw') {
-    const stallType = String(el.stallType.value || '').trim();
-    if (stallType) await applyDefaultRangeForType(stallType);
-  }
+  if (mode === 'draw') el.hint.textContent = '抽签模式摊位号范围由“摊位分类”配置自动生成';
 });
 
 if (el.qtyFilterGroup) {
@@ -417,18 +415,7 @@ el.btnStartStop.addEventListener('click', async () => {
   }
 
   let stallNumbers = null;
-  if (mode === 'draw') {
-    let parsed = parseNumbers(el.stallNumbers.value);
-    if (parsed.length === 0) {
-      await applyDefaultRangeForType(stallType);
-      parsed = parseNumbers(el.stallNumbers.value);
-    }
-    if (parsed.length === 0) {
-      el.hint.textContent = '抽签模式必须填写摊位号列表';
-      return;
-    }
-    stallNumbers = parsed;
-  }
+  if (mode === 'draw') stallNumbers = null;
 
   const qtyFilter = getQtyFilterValue();
 
