@@ -53,22 +53,34 @@ async function buildPoolsForTypeFromStallClass(stallType) {
     return Number(a.id || 0) - Number(b.id || 0);
   });
 
-  const total = rows.reduce((sum, r) => sum + Math.max(0, Number(r.stall_count || 0)), 0);
+  const total = rows.reduce((sum, r) => {
+    const stallCount = Math.max(0, Number(r.stall_count || 0));
+    const demand = Number(r.person_count);
+    const effectiveCount = Number.isFinite(demand) ? Math.max(0, Math.min(stallCount, demand)) : stallCount;
+    return sum + effectiveCount;
+  }, 0);
   const stallNumbers = Array.from({ length: total }, (_, i) => i + 1);
 
-  const drawn = new Set((await db.getDrawnStallNosByType(stallType)).map((x) => Number(x)).filter((n) => Number.isFinite(n)));
+  const drawn = new Set(
+    (await db.getDrawnStallNosByType(stallType))
+      .map((x) => Number(x))
+      .filter((n) => Number.isFinite(n) && n >= 1 && n <= total)
+  );
 
   const poolsByClass = new Map();
-  let cursor = 1;
+  let baseCursor = 1;
+  let assignedCursor = 1;
   for (const r of rows) {
     const sellClass = String(r.sell_class || '').trim();
-    const count = Math.max(0, Number(r.stall_count || 0));
-    const start = cursor;
-    const end = cursor + count - 1;
-    cursor = end + 1;
+    const stallCount = Math.max(0, Number(r.stall_count || 0));
+    const demand = Number(r.person_count);
+    const count = Number.isFinite(demand) ? Math.max(0, Math.min(stallCount, demand)) : stallCount;
+    const start = baseCursor;
+    const usableEnd = start + count - 1;
+    baseCursor += stallCount;
 
     const pool = [];
-    for (let n = start; n <= end; n += 1) {
+    for (let n = start; n <= usableEnd; n += 1) {
       if (!drawn.has(n)) pool.push(n);
     }
     poolsByClass.set(sellClass, pool);
