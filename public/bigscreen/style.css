@@ -568,30 +568,37 @@ html, body {
 .card-queued .item,
 .card-unqueued .item {
   padding: 14px 16px;
-  height: 120px;
   font-size: 28px;
 }
 
 .card-queued .item {
-  gap: 18px;
+  gap: 12px;
+  align-items: flex-start;
+  position: relative;
+  padding-left: 90px;
+  min-height: 110px;
 }
 
 .card-queued .item strong {
-  font-size: 46px;
+  font-size: 26px;
   line-height: 1;
-  letter-spacing: 1px;
-  font-weight: 900;
-  min-width: 90px;
+  letter-spacing: 0.5px;
+  position: absolute;
+  top: 16px;
+  left: 14px;
+  min-width: 60px;
+  text-align: center;
 }
 
 .card-queued .item span {
   font-size: 32px;
   font-weight: 700;
   flex: 1;
-  text-align: right;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  text-overflow: unset;
+  line-height: 1.25;
+  word-break: break-word;
 }
 
 .card-unqueued .item {

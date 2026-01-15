@@ -2,6 +2,7 @@ const path = require('path');
 const http = require('http');
 const express = require('express');
 const { Server } = require('socket.io');
+const ExcelJS = require('exceljs');
 
 const db = require('./db');
 
@@ -18,6 +19,57 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/api/export/lottery-result.xlsx', async (req, res) => {
+  try {
+    const stallType = String((req.query && req.query.stallType) || '').trim();
+    if (!stallType) {
+      res.status(400).send('stallType required');
+      return;
+    }
+
+    const rows = await db.getLotteryResultsByStallType(stallType);
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('抽签结果');
+
+    ws.columns = [
+      { header: '姓名', key: 'name', width: 14 },
+      { header: '身份证号', key: 'idCard', width: 22 },
+      { header: '摊位类型', key: 'stallType', width: 14 },
+      { header: '经营分类', key: 'sellClass', width: 14 },
+      { header: '排号', key: 'queueNo', width: 10 },
+      { header: '摊位号', key: 'stallNo', width: 12 },
+      { header: '抽签时间', key: 'createdAt', width: 20 },
+    ];
+
+    for (const r of rows) {
+      ws.addRow({
+        name: r.name,
+        idCard: r.idCard,
+        stallType: r.stallType,
+        sellClass: r.sellClass || '',
+        queueNo: r.queueNo,
+        stallNo: r.stallNo,
+        createdAt: r.createdAt,
+      });
+    }
+
+    ws.getRow(1).font = { bold: true };
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+
+    const filename = `抽签结果_${stallType}.xlsx`;
+    const filenameStar = encodeURIComponent(filename);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${filenameStar}`);
+
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (e) {
+    console.error(e);
+    res.status(500).send('export failed');
+  }
+});
 
 let currentStallType = '';
 let currentMode = 'idle';

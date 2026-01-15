@@ -311,6 +311,17 @@ async function countLotteryResultsByOwnerType({ idCard, stallType }) {
   return row && row.cnt ? Number(row.cnt) : 0;
 }
 
+async function getLotteryResultsByStallType(stallType) {
+  const type = String(stallType || '').trim();
+  return all(
+    `SELECT id, name, id_card AS idCard, stall_type AS stallType, sell_class AS sellClass, queue_no AS queueNo, stall_no AS stallNo, created_at AS createdAt
+     FROM lottery_result
+     WHERE stall_type = ?
+     ORDER BY created_at ASC, queue_no ASC, id ASC`,
+    [type]
+  );
+}
+
 async function sumQtyByType(stallType) {
   return sumQtyByTypeAndQtyFilter(stallType, null);
 }
@@ -433,6 +444,7 @@ module.exports = {
   insertLotteryResultsBulk,
   getDrawnStallNosByType,
   countLotteryResultsByOwnerType,
+  getLotteryResultsByStallType,
   sumQtyByType,
   sumQtyByTypeAndQtyFilter,
   insertOwnersBulk,

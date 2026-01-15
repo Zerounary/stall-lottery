@@ -7,6 +7,7 @@ const el = {
   stallNumbersField: document.getElementById('stallNumbersField'),
   stallNumbers: document.getElementById('stallNumbers'),
   btnStartStop: document.getElementById('btnStartStop'),
+  btnExportLotteryResult: document.getElementById('btnExportLotteryResult'),
   hint: document.getElementById('hint'),
   statusSummary: document.getElementById('statusSummary'),
   stallGrid: document.getElementById('stallGrid'),
@@ -351,11 +352,6 @@ socket.on('connect', async () => {
     isRunning = serverMode === 'queue' || serverMode === 'draw';
     updateUi();
 
-    const selectedMode = String(el.mode.value || 'queue');
-    if (selectedMode === 'draw') {
-      el.hint.textContent = '抽签模式摊位号范围由“摊位分类”配置自动生成';
-    }
-
     await refreshStallClassList();
 
     await refreshStatus();
@@ -424,6 +420,18 @@ if (el.btnRefreshStallClass) {
 if (el.btnSaveAllStallClass) {
   el.btnSaveAllStallClass.addEventListener('click', async () => {
     await saveAllStallClasses();
+  });
+}
+
+if (el.btnExportLotteryResult) {
+  el.btnExportLotteryResult.addEventListener('click', () => {
+    const stallType = String(el.stallType.value || '').trim();
+    if (!stallType) {
+      el.hint.textContent = '请先选择摊位类型';
+      return;
+    }
+    const url = `/api/export/lottery-result.xlsx?stallType=${encodeURIComponent(stallType)}`;
+    window.open(url, '_blank', 'noopener');
   });
 }
 
