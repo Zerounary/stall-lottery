@@ -273,6 +273,12 @@ html, body {
   margin: 0;
 }
 
+.section-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .pill-ghost {
   display: inline-flex;
   align-items: center;
@@ -368,6 +374,11 @@ html, body {
   gap: 12px;
 }
 
+.stall-class-row.is-exceed {
+  background: rgba(248, 113, 113, 0.16);
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
 .stall-class-meta {
   display: grid;
   gap: 6px;
@@ -392,10 +403,6 @@ html, body {
 .stall-class-input {
   padding: 10px 10px;
   font-size: 16px;
-}
-
-.stall-class-save {
-  justify-content: center;
 }
 
 .radio-group {

@@ -12,11 +12,13 @@ const el = {
   stallGrid: document.getElementById('stallGrid'),
   qtyFilterGroup: document.getElementById('qtyFilterGroup'),
   btnRefreshStallClass: document.getElementById('btnRefreshStallClass'),
+  btnSaveAllStallClass: document.getElementById('btnSaveAllStallClass'),
   stallClassList: document.getElementById('stallClassList'),
 };
 
 let isRunning = false;
 let serverMode = 'idle';
+let stallClassData = [];
 
 function setSocketStatus(connected) {
   el.socketStatus.textContent = connected ? '已连接' : '未连接';
@@ -170,18 +172,30 @@ function toInt(v, fallback = 0) {
   return Math.trunc(n);
 }
 
+function updateStallClassRowIndicator(rowEl) {
+  if (!rowEl) return;
+  const index = Number(rowEl.dataset.index);
+  const original = Number(index >= 0 && stallClassData[index] ? stallClassData[index].person_count : 0) || 0;
+  const input = rowEl.querySelector('input[data-field="stallCount"]');
+  const stallCount = toInt(input && input.value, 0);
+  rowEl.classList.toggle('is-exceed', original > stallCount);
+}
+
 function renderStallClassList(list) {
   if (!el.stallClassList) return;
   el.stallClassList.innerHTML = '';
+
+  stallClassData = Array.isArray(list) ? list.slice() : [];
 
   if (!Array.isArray(list) || list.length === 0) {
     el.stallClassList.innerHTML = '<div class="muted">暂无数据</div>';
     return;
   }
 
-  for (const row of list) {
+  list.forEach((row, index) => {
     const wrap = document.createElement('div');
     wrap.className = 'stall-class-row';
+    wrap.dataset.index = String(index);
 
     const meta = document.createElement('div');
     meta.className = 'stall-class-meta';
@@ -191,7 +205,7 @@ function renderStallClassList(list) {
     meta.innerHTML = `
       <div><span class="muted">类型：</span><span>${safeType}</span></div>
       <div><span class="muted">分类：</span><span>${safeClass}</span></div>
-      <div><span class="muted">人数：</span><span>${safePersonCount}</span></div>
+      <div><span class="muted">需求数：</span><span>${safePersonCount}</span></div>
     `;
 
     const edit = document.createElement('div');
@@ -202,41 +216,15 @@ function renderStallClassList(list) {
     inputStallCount.type = 'number';
     inputStallCount.value = row && row.stall_count != null ? String(row.stall_count) : '0';
     inputStallCount.min = '0';
+    inputStallCount.dataset.field = 'stallCount';
+    inputStallCount.addEventListener('input', () => updateStallClassRowIndicator(wrap));
 
     const inputOrderNo = document.createElement('input');
     inputOrderNo.className = 'input stall-class-input';
     inputOrderNo.type = 'number';
     inputOrderNo.value = row && row.order_no != null ? String(row.order_no) : '0';
     inputOrderNo.min = '0';
-
-    const btnSave = document.createElement('button');
-    btnSave.className = 'btn btn-primary stall-class-save';
-    btnSave.type = 'button';
-    btnSave.textContent = '保存';
-
-    btnSave.addEventListener('click', async () => {
-      const id = row && row.id != null ? Number(row.id) : 0;
-      const stallCount = toInt(inputStallCount.value, 0);
-      const orderNo = toInt(inputOrderNo.value, 0);
-      btnSave.disabled = true;
-      try {
-        const res = await socket.emitWithAck('bigscreen:updateStallClass', {
-          id,
-          stallType: safeType,
-          sellClass: safeClass,
-          stallCount,
-          orderNo,
-        });
-        if (!res || !res.ok) {
-          el.hint.textContent = (res && res.message) || '保存失败';
-          return;
-        }
-        el.hint.textContent = '已保存';
-        renderStallClassList(res.list);
-      } finally {
-        btnSave.disabled = false;
-      }
-    });
+    inputOrderNo.dataset.field = 'orderNo';
 
     const labelStallCount = document.createElement('div');
     labelStallCount.className = 'stall-class-edit-label';
@@ -249,12 +237,12 @@ function renderStallClassList(list) {
     labelOrderNo.textContent = '顺序';
     edit.appendChild(labelOrderNo);
     edit.appendChild(inputOrderNo);
-    edit.appendChild(btnSave);
 
     wrap.appendChild(meta);
     wrap.appendChild(edit);
     el.stallClassList.appendChild(wrap);
-  }
+    updateStallClassRowIndicator(wrap);
+  });
 }
 
 async function refreshStallClassList() {
@@ -265,6 +253,51 @@ async function refreshStallClassList() {
     return;
   }
   renderStallClassList(res.list);
+}
+
+function collectEditedStallClassItems() {
+  if (!el.stallClassList) return [];
+  const rows = Array.from(el.stallClassList.querySelectorAll('.stall-class-row'));
+  const items = [];
+  for (const row of rows) {
+    const index = Number(row.dataset.index);
+    if (!Number.isFinite(index)) continue;
+    const original = stallClassData[index];
+    if (!original) continue;
+    const inputStall = row.querySelector('input[data-field="stallCount"]');
+    const inputOrder = row.querySelector('input[data-field="orderNo"]');
+    items.push({
+      id: original.id,
+      stallType: original.stall_type,
+      sellClass: original.sell_class,
+      stallCount: toInt(inputStall && inputStall.value, 0),
+      orderNo: toInt(inputOrder && inputOrder.value, 0),
+    });
+  }
+  return items;
+}
+
+async function saveAllStallClasses() {
+  if (!el.btnSaveAllStallClass) return;
+  const items = collectEditedStallClassItems();
+  if (items.length === 0) {
+    el.hint.textContent = '没有可保存的数据';
+    return;
+  }
+  el.btnSaveAllStallClass.disabled = true;
+  el.btnSaveAllStallClass.textContent = '保存中...';
+  try {
+    const res = await socket.emitWithAck('bigscreen:updateStallClasses', { items });
+    if (!res || !res.ok) {
+      el.hint.textContent = (res && res.message) || '保存失败';
+      return;
+    }
+    el.hint.textContent = '已保存全部摊位分类';
+    renderStallClassList(res.list);
+  } finally {
+    el.btnSaveAllStallClass.disabled = false;
+    el.btnSaveAllStallClass.textContent = '保存全部';
+  }
 }
 
 socket.on('connect', () => setSocketStatus(true));
@@ -352,6 +385,12 @@ if (el.qtyFilterGroup) {
 if (el.btnRefreshStallClass) {
   el.btnRefreshStallClass.addEventListener('click', async () => {
     await refreshStallClassList();
+  });
+}
+
+if (el.btnSaveAllStallClass) {
+  el.btnSaveAllStallClass.addEventListener('click', async () => {
+    await saveAllStallClasses();
   });
 }
 

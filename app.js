@@ -430,6 +430,35 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('bigscreen:updateStallClasses', async (payload = {}, ack) => {
+    try {
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      if (items.length === 0) {
+        if (typeof ack === 'function') ack({ ok: false, message: '没有可更新的数据' });
+        return;
+      }
+
+      for (const item of items) {
+        const id = Number(item && item.id);
+        const stallType = String((item && item.stallType) || '').trim();
+        const sellClass = String((item && item.sellClass) || '').trim();
+        const stallCount = Number(item && item.stallCount);
+        const orderNo = Number(item && item.orderNo);
+        if (!Number.isFinite(id) || id <= 0 || !stallType || !sellClass || !Number.isFinite(stallCount) || !Number.isFinite(orderNo)) {
+          if (typeof ack === 'function') ack({ ok: false, message: '存在无效的行数据' });
+          return;
+        }
+        await db.updateStallClass({ id, stallType, sellClass, stallCount, orderNo });
+      }
+
+      const list = await db.getStallClasses();
+      if (typeof ack === 'function') ack({ ok: true, list });
+    } catch (e) {
+      console.error(e);
+      if (typeof ack === 'function') ack({ ok: false, message: '批量更新失败' });
+    }
+  });
+
   socket.on('bigscreen:stallClass:list', async (payload = {}, ack) => {
     try {
       const list = await db.getStallClasses();

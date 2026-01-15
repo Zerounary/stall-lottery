@@ -389,7 +389,7 @@ async function deleteStallClass(id) {
 async function syncStallClassStats() {
   // Sync person_count based on stall_owner data
   const stats = await all(
-    `SELECT stall_type, sell_class, COUNT(DISTINCT id_card) as cnt
+    `SELECT stall_type, sell_class, SUM(qty) as cnt
      FROM stall_owner
      WHERE sell_class IS NOT NULL AND sell_class != ''
      GROUP BY stall_type, sell_class`
